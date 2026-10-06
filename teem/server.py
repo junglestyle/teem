@@ -33,7 +33,7 @@ from .common import (
 from .db import connect, event, migrate
 from .review import ReviewInputError, build_context, validate_result
 from .speech import SpeechRunner
-from . import chat, decider, github, stats, telegram
+from . import chat, decider, fidelity, github, stats, telegram
 from .workflow import (cancel_run, create_run, decide_run, reviewer_identity, run_cancelled, status_rows,
                        run_limit, stop_run, task_attempt_limit)
 
@@ -1278,6 +1278,9 @@ class App:
         self.decider_api = decider.API
         self.decider = decider.load_config(decider_config) if decider_config else None
         self.chat_key = getattr(args, "chat_key", None)
+        fidelity_config = getattr(args, "fidelity_config", None)
+        self.fidelity_api = fidelity.API
+        self.fidelity = fidelity.load_config(fidelity_config) if fidelity_config else None
         telegram_config = getattr(args, "telegram_config", None)
         self.telegram_api = telegram.API
         self.telegram_token = self.telegram_user_id = None
@@ -1349,6 +1352,8 @@ def main():
     serve.add_argument("--speech-scratch", help="private temporary directory outside artifacts and backups")
     serve.add_argument("--github-config", required=True, help="allowed GitHub owners and optional token JSON")
     serve.add_argument("--decider-config", help="OpenRouter API key, model, and timeout JSON")
+    serve.add_argument("--fidelity-config", help="TypeSafe API key, Jev model, and timeout JSON for checking "
+                                                 "proposals against the request before a grant starts them")
     serve.add_argument("--telegram-config", help="server-owned bot token and allowed Telegram user_id JSON")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)

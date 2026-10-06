@@ -13,11 +13,11 @@ def reviewer_identity(config):
 
 
 def create_run(conn, project_id, base, checks, reviewer, objective, criteria, dedupe_key, revisions=2, model=None,
-               decider_model=None):
+               decider_model=None, fidelity=None):
     """Create a proposed Run, or return the Run already created for this deduplication key.
 
-    A granted project authorizes the Run in the same transaction; otherwise the Run waits for a
-    decision. Returns (run_id, created). The caller commits.
+    A granted project authorizes the Run in the same transaction, unless the fidelity check raised
+    concerns; otherwise the Run waits for a decision. Returns (run_id, created). The caller commits.
     """
     existing = conn.execute("""SELECT r.id FROM runs r JOIN requests q ON q.id=r.request_id
                                WHERE q.dedupe_key=%s""", (dedupe_key,)).fetchone()
@@ -57,9 +57,10 @@ def create_run(conn, project_id, base, checks, reviewer, objective, criteria, de
                  (run_id, request_id, project_id, RUN_SECONDS))
     conn.execute("INSERT INTO contracts(run_id,version,body,proposal) VALUES (%s,1,%s::jsonb,%s::jsonb)",
                  (run_id, canonical(body), canonical(proposal)))
-    granted = project["status"] == "granted"
+    granted = project["status"] == "granted" and not (fidelity and fidelity["concerns"])
     event(conn, run_id, "proposal_created", {"contract_version": 1, "request_id": request_id,
-                                             "decider_model": decider_model}, notify=not granted)
+                                             "decider_model": decider_model, "fidelity": fidelity},
+          notify=not granted)
     if granted:
         decide_run(conn, run_id, 1, "approve", "project_grant:" + str(project["grant_id"]))
     return run_id, True
@@ -136,7 +137,7 @@ def run_cancelled(conn, run_id, reviewer):
     proposal = pending["payload"]
     new_run, created = create_run(conn, proposal["project_id"], proposal["base"], proposal["checks"], reviewer,
                                   proposal["objective"], proposal["criteria"], "replace:" + str(run_id),
-                                  proposal["revisions"], proposal.get("model"))
+                                  proposal["revisions"], proposal.get("model"), fidelity=proposal.get("fidelity"))
     if created and conn.execute("SELECT status FROM runs WHERE id=%s", (new_run,)).fetchone()["status"] == "queued":
         # A granted replacement starts without a decision message, so say that it started.
         event(conn, new_run, "replacement_started", {"replaces": str(run_id)}, notify=True)

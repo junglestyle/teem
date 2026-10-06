@@ -43,6 +43,9 @@ services:
         --reviewer-config /srv/teem/config/reviewer.json --github-config /srv/teem/config/github.json
         --decider-config /srv/teem/config/decider.json --telegram-config /srv/teem/config/telegram.json
         --host 0.0.0.0;
+        if [ -f /srv/teem/config/fidelity.json ]; then
+        set -- "$$@" --fidelity-config /srv/teem/config/fidelity.json;
+        fi;
         if [ -f /srv/teem/config/speech.json ]; then
         set -- "$$@" --speech-config /srv/teem/config/speech.json --speech-scratch /srv/teem/speech-scratch;
         fi;

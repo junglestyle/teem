@@ -19,7 +19,7 @@ from psycopg.conninfo import make_conninfo
 
 from teem.db import connect, migrate
 from teem.worker import container_command, restricted_run
-from teem.workflow import create_run
+from teem.workflow import cancel_run, create_run, decide_run
 from tests.test_slice import run
 
 FAKE_CLAUDE = """#!/usr/bin/python3
@@ -176,6 +176,20 @@ class FakeGitHub(BaseHTTPRequestHandler):
 def callback(update_id, data, sender=USER):
     return {"update_id": update_id, "callback_query": {"id": f"cb{update_id}", "from": {"id": sender},
                                                        "message": {"chat": {"id": sender}}, "data": data}}
+
+
+class FakeJev(BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.server.requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        status, scores = self.server.responses.pop(0)
+        data = json.dumps({"answers": {name: {"type": "noul", "noul": value} for name, value in scores.items()}}).encode()
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *_):
+        pass
 
 
 class Slice4Acceptance(unittest.TestCase):
@@ -825,6 +839,48 @@ class Slice4Acceptance(unittest.TestCase):
         self.assertIn("change the value", history, "voice turns join the shared conversation")
         self.assertEqual(self.browser("POST", f"/runs/{self.run_row()['id']}/approve",
                                       {"version": "1", "decision": "deny"})[0], 303)
+
+    def test_fidelity_doubts_send_granted_runs_to_the_approve_button(self):
+        jev = HTTPServer(("127.0.0.1", 0), FakeJev)
+        jev.requests = []
+        threading.Thread(target=jev.serve_forever, daemon=True).start()
+        self.addCleanup(jev.server_close)
+        self.addCleanup(jev.shutdown)
+        self.enable_decider()
+        app = self.server.app
+        app.fidelity_api = f"http://127.0.0.1:{jev.server_port}"
+        app.fidelity = {"api_key": "key", "model": "jev-latest", "timeout": 10}
+        with connect(self.dsn) as conn:
+            conn.execute("UPDATE projects SET status='granted' WHERE id=%s", (self.project_id,))
+        run_tool = ("propose_run", {"repo": self.project_id, "objective": "Change value",
+                                    "acceptance_criteria": "value.txt contains after"})
+        clean = {"covers_ask": 0.95, "adds_scope": 0.05, "clear_ask": 0.9, "wants_start": 0.95}
+
+        self.model.responses = [("Starting.", run_tool)]
+        jev.responses = [(200, clean)]
+        self.deliver(message(900, text="change the value"))
+        run = self.run_row()
+        self.assertEqual(run["status"], "queued")
+        self.assertEqual(jev.requests[-1]["state"]["latest_user_message"], "change the value")
+        self.assertEqual(jev.requests[-1]["state"]["proposed_run"]["objective"], "Change value")
+        with connect(self.dsn) as conn:
+            cancel_run(conn, run["id"], app.reviewer)
+
+        # A doubt or an unreachable checker only asks; it never approves or denies.
+        for update_id, response, concern in ((902, (200, {**clean, "adds_scope": 0.8}), "add work"),
+                                             (903, (529, {}), "unavailable")):
+            self.model.responses = [("Starting.", run_tool)]
+            jev.responses = [response]
+            self.deliver(message(update_id, text="change the value and maybe more"))
+            run = self.run_row()
+            self.assertEqual(run["status"], "awaiting_approval")
+            decision = self.api.state["sent"][-1]
+            self.assertIn("Check before approving:", decision["text"])
+            self.assertIn(concern, decision["text"])
+            self.assertIn("reply_markup", decision)
+            with connect(self.dsn) as conn:
+                self.assertIsNone(conn.execute("SELECT 1 FROM approvals WHERE run_id=%s", (run["id"],)).fetchone())
+                decide_run(conn, run["id"], 1, "deny", "test")
 
 
 if __name__ == "__main__":

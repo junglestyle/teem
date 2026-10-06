@@ -4,7 +4,7 @@ import urllib.request
 
 import psycopg
 
-from . import decider, github
+from . import decider, fidelity, github
 from .common import IMPLEMENTER_MODELS, STATUS_LABELS, ApiError
 from .db import connect
 from .speech import MAX_AUDIO, MAX_SECONDS, SpeechError
@@ -164,10 +164,12 @@ def prepare(app, text, spoken=False):
         base, checks = github.fetch_base(app, repo)
     except github.GitHubError as exc:
         return replies + [f"I couldn't read {repo} from GitHub: {exc}"], None
+    objective, criteria = objective.strip(), criteria.strip()
     replaces = args.get("replaces_run_id")
     return replies, {"kind": name, "repo": repo, "base": base, "checks": checks,
-                     "objective": objective.strip(), "criteria": criteria.strip(), "model": model,
-                     "replaces": str(replaces) if replaces else None}
+                     "objective": objective, "criteria": criteria, "model": model,
+                     "replaces": str(replaces) if replaces else None,
+                     "fidelity": fidelity.check(app, text, repo, objective, criteria) if app.fidelity else None}
 
 
 def ensure_project(conn, repo):
@@ -208,7 +210,8 @@ def apply_action(conn, app, dedupe_key, action, spoken=False):
             with conn.transaction():
                 run_id, _ = create_run(conn, action["repo"], action["base"], action["checks"], app.reviewer,
                                        action["objective"], action["criteria"], dedupe_key,
-                                       model=action["model"], decider_model=app.decider["model"])
+                                       model=action["model"], decider_model=app.decider["model"],
+                                       fidelity=action["fidelity"])
         except psycopg.errors.UniqueViolation:
             return [f"A run is already active on {action['repo']}."]
         except ApiError as exc:
@@ -258,7 +261,7 @@ def replace_run(conn, app, action):
         return None
     proposal = {"project_id": action["repo"], "base": action["base"], "checks": action["checks"],
                 "objective": action["objective"], "criteria": action["criteria"], "revisions": 2,
-                "model": action["model"]}
+                "model": action["model"], "fidelity": action["fidelity"]}
     if request_replacement(conn, old["id"], proposal, app.reviewer) == "cancelling":
         return ["Stopping the current run. The new one starts as soon as it has stopped."]
     return []
@@ -380,6 +383,11 @@ def run_update(conn, run_id, origin):
         text += (f"\nDone when: {contract['acceptance_criteria'][:600]}\nChecks: {checks}"
                  f"\nBase: {contract['base_commit'][:10]} · up to {contract['limits']['revisions']} revisions"
                  f" · model: {contract.get('implementer_model', 'default')}")
+        proposed = conn.execute("SELECT payload FROM events WHERE run_id=%s AND kind='proposal_created'",
+                                (run_id,)).fetchone()
+        concerns = ((proposed["payload"].get("fidelity") if proposed else None) or {}).get("concerns")
+        if concerns:
+            text += "\nCheck before approving: " + "; ".join(concerns) + "."
         prefix = f"r:{run_id}:{run['contract_version']}:"
         buttons = [[{"text": "Approve", "callback_data": prefix + "a"}, {"text": "Deny", "callback_data": prefix + "d"}]]
     return text + f"\n{origin}/runs/{run_id}", buttons

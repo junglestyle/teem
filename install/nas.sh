@@ -86,6 +86,9 @@ for name in telegram github decider reviewer; do
     fi
     chown "root:$APPS_GID" "$file" && chmod 640 "$file"
 done
+if [ -f "$NAS_CONFIG/fidelity.json" ]; then
+    chown "root:$APPS_GID" "$NAS_CONFIG/fidelity.json" && chmod 640 "$NAS_CONFIG/fidelity.json"
+fi
 if [ -f "$NAS_CONFIG/speech.json" ]; then
     chown "root:$APPS_GID" "$NAS_CONFIG/speech.json" && chmod 640 "$NAS_CONFIG/speech.json"
     # speech.json turns voice on; the server refuses to start if its runner or model is missing.

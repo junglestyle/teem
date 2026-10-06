@@ -64,6 +64,12 @@ The server reads these configuration files:
   {"identity": "openai-codex", "instructions": "Review the Candidate strictly against its original acceptance criteria.", "destination": "openai", "timeout": 1200}
   ```
 
+- **Fidelity** (optional, `fidelity.json`): a TypeSafe API key for Jev. Before a granted project starts a Run without asking, Jev compares your words with the decider's objective and criteria: does the proposal cover everything you asked for, add work you didn't ask for, guess at an unclear request, or start work you were only discussing? Any doubt, or Jev being unreachable, sends the usual Approve button with the reason instead; Jev can never approve anything. Its scores are recorded with each proposal, so the limits in `teem/fidelity.py` can be tuned against which pull requests you merged.
+
+  ```json
+  {"api_key": "<TypeSafe API key>", "model": "jev-latest", "timeout": 30}
+  ```
+
 - **Speech** (optional, for voice notes): a hash-pinned `whisper-cli` and model. The server verifies both hashes at startup, runs them in a Bubblewrap sandbox, and deletes audio after transcription. `ggml-base.en.bin` is fast but inaccurate, so measure a larger English model against the 120-second clip and 180-second inference bounds on your CPU.
 
   ```json
