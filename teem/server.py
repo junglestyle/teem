@@ -1332,35 +1332,39 @@ class App:
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        epilog="Secrets come from the environment, not arguments, so process listings don't show them: "
+               "TEEM_DSN for every command; TEEM_PASSWORD, TEEM_WORKER_TOKEN, and optional TEEM_CHAT_KEY for serve.")
     sub = parser.add_subparsers(dest="command", required=True)
     for command in ("init", "migrate"):
         # init is kept as an alias; both create a fresh database or apply missing migrations.
-        sub.add_parser(command).add_argument("--dsn", required=True)
+        sub.add_parser(command)
     serve = sub.add_parser("serve")
-    serve.add_argument("--dsn", required=True)
     serve.add_argument("--artifacts", required=True)
     serve.add_argument("--username", required=True)
-    serve.add_argument("--password", required=True)
     serve.add_argument("--worker-id", required=True)
-    serve.add_argument("--worker-token", required=True)
     serve.add_argument("--origin", required=True, help="External HTTPS origin, e.g. https://teem.example")
     serve.add_argument("--reviewer-config", required=True, help="server-owned local review identity and instructions JSON")
     serve.add_argument("--speech-config", help="server-owned whisper-cli executable, model identity, and language JSON")
     serve.add_argument("--speech-scratch", help="private temporary directory outside artifacts and backups")
     serve.add_argument("--github-config", required=True, help="allowed GitHub owners and optional token JSON")
     serve.add_argument("--decider-config", help="OpenRouter API key, model, and timeout JSON")
-    serve.add_argument("--chat-key", help="bearer key for the OpenAI-compatible chat endpoint used by voice apps")
     serve.add_argument("--telegram-config", help="server-owned bot token and allowed Telegram user_id JSON")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
+    args.dsn = os.environ.get("TEEM_DSN")
+    if not args.dsn:
+        parser.error("TEEM_DSN required")
     if args.command in ("init", "migrate"):
         applied = migrate(args.dsn)
         print("applied: " + (", ".join(applied) if applied else "nothing; the schema is current"))
     else:
+        args.password = os.environ.get("TEEM_PASSWORD")
+        args.worker_token = os.environ.get("TEEM_WORKER_TOKEN")
+        args.chat_key = os.environ.get("TEEM_CHAT_KEY")
         if not all((args.password, args.worker_token, args.origin.startswith("https://"))):
-            parser.error("password, worker token, and HTTPS origin required")
+            parser.error("TEEM_PASSWORD, TEEM_WORKER_TOKEN, and HTTPS origin required")
         server = ThreadingHTTPServer((args.host, args.port), Handler)
         server.app = App(args)
         threading.Thread(target=server.app.sweep, daemon=True).start()

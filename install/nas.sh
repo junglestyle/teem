@@ -72,8 +72,9 @@ env_ensure "$NAS_ENV" TEEM_CHAT_KEY "$(random_secret)"
        TEEM_ORIGIN=https://truenas.example.ts.net:8443
        Then re-run."
 chmod 600 "$NAS_ENV"
-chown root:root "$NAS_ENV" "$NAS_CONFIG/postgres_password"
-chmod 600 "$NAS_CONFIG/postgres_password"
+chown root:root "$NAS_ENV"
+# PostgreSQL runs as the apps user and reads this file on a fresh install.
+chown "root:$APPS_GID" "$NAS_CONFIG/postgres_password" && chmod 640 "$NAS_CONFIG/postgres_password"
 
 say "Configuration files"
 missing=""
@@ -101,6 +102,14 @@ if [ -n "$db_initialized" ] && docker ps --format '{{.Names}}' | grep -qx teem-p
     say "Backing up before changing anything"
     "$REPO_DIR/install/backup.sh"
 fi
+
+# PostgreSQL used to run as the image's uid 999 (netdata on TrueNAS); hand its data to the apps user once.
+if [ -n "$(find "$NAS_POSTGRES" ! -uid "$APPS_UID" -print -quit)" ]; then
+    say "Handing $NAS_POSTGRES to the apps user"
+    "${COMPOSE[@]}" stop server postgres
+    chown -R "$APPS_UID:$APPS_GID" "$NAS_POSTGRES"
+fi
+chmod 700 "$NAS_POSTGRES"
 
 say "Building the server image from $(git -C "$REPO_DIR" describe --tags --always --dirty)"
 "${COMPOSE[@]}" --profile tools build

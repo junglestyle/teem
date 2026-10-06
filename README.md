@@ -36,7 +36,7 @@ To update, check out a release tag and re-run the script: `git -C /mnt/storage/t
 
 **Backups.** [`install/backup.sh`](install/backup.sh) writes a PostgreSQL dump plus artifacts and configuration archives to `/mnt/storage/teem/backups/<time>/`, keeping the newest 14. `nas.sh` runs it before every deploy. Schedule it daily as root under TrueNAS System → Advanced → Cron Jobs. Backups sit on the same pool, so replicate or cloud-sync the `backups` dataset off the NAS to survive a lost pool. Restore steps are at the top of the script.
 
-Outside TrueNAS, the server needs Python 3.11+, PostgreSQL, Git, and HTTPS termination in front of the loopback server; `teem-server migrate --dsn "$TEEM_DSN"` creates or upgrades the database.
+Outside TrueNAS, the server needs Python 3.11+, PostgreSQL, Git, and HTTPS termination in front of the loopback server; `teem-server migrate` creates or upgrades the database named by `TEEM_DSN`. Secrets come from the environment (`TEEM_DSN`, `TEEM_PASSWORD`, `TEEM_WORKER_TOKEN`, `TEEM_CHAT_KEY`), never from arguments.
 
 The server reads these configuration files:
 
