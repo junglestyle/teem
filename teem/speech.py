@@ -8,7 +8,10 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import wave
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 
@@ -69,26 +72,16 @@ class SpeechRunner:
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
 
-    def _run(self, command, input_path, scratch, deadline, capture=False):
-        sandbox = ["bwrap", "--unshare-all", "--die-with-parent",
-                   "--ro-bind", "/usr", "/usr", "--ro-bind", "/bin", "/bin",
-                   "--ro-bind", "/lib", "/lib", "--ro-bind", "/lib64", "/lib64",
-                   "--dir", "/etc", "--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache",
-                   "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-                   "--ro-bind", str(input_path), "/input",
-                   "--ro-bind", str(self.model), "/model",
-                   "--ro-bind", str(self.executable), "/runner",
-                   "--bind", str(scratch), "/scratch",
-                   "--chdir", "/scratch", "--setenv", "HOME", "/tmp",
-                   "--setenv", "PATH", "/usr/bin:/bin", "--", *command]
+    def _run(self, command, scratch, deadline, capture=False):
+        # No sandbox here: the speech container is the sandbox (no network, no secrets, read-only).
         timeout = deadline - time.monotonic()
         if timeout <= 0 or self.stopping:
             raise SpeechError("transcription timed out")
         try:
-            process = subprocess.Popen(sandbox, stdin=subprocess.DEVNULL,
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, cwd=scratch,
                                        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL, start_new_session=True, preexec_fn=self._limits,
-                                       env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"})
+                                       env={"PATH": "/usr/bin:/bin", "HOME": str(scratch)})
         except OSError as exc:
             raise SpeechError("local recognition unavailable") from exc
         self.process = process
@@ -126,8 +119,8 @@ class SpeechRunner:
             # ffprobe checks the container and codec, not the browser's MIME claim.
             try:
                 raw = self._run(["/usr/bin/ffprobe", "-v", "error", "-show_entries",
-                                 "format=format_name,duration:stream=codec_type,codec_name", "-of", "json", "/input"],
-                                input_path, scratch, deadline, capture=True)
+                                 "format=format_name,duration:stream=codec_type,codec_name", "-of", "json",
+                                 str(input_path)], scratch, deadline, capture=True)
             except SpeechError as exc:
                 if "timed out" in str(exc):
                     raise
@@ -146,9 +139,9 @@ class SpeechRunner:
             except (ValueError, KeyError, TypeError, IndexError) as exc:
                 raise SpeechError("invalid or overlong recording") from exc
             try:
-                self._run(["/usr/bin/ffmpeg", "-nostdin", "-v", "error", "-i", "/input",
+                self._run(["/usr/bin/ffmpeg", "-nostdin", "-v", "error", "-i", str(input_path),
                            "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
-                           "/scratch/input.wav"], input_path, scratch, deadline)
+                           str(scratch / "input.wav")], scratch, deadline)
             except SpeechError as exc:
                 if "timed out" in str(exc):
                     raise
@@ -160,8 +153,8 @@ class SpeechRunner:
                         raise ValueError
             except (OSError, wave.Error, ValueError) as exc:
                 raise SpeechError("invalid or overlong recording") from exc
-            self._run(["/runner", "-m", "/model", "-f", "/scratch/input.wav", "-l", self.language,
-                       "-otxt", "-of", "/scratch/transcript"], input_path, scratch, deadline)
+            self._run([str(self.executable), "-m", str(self.model), "-f", str(scratch / "input.wav"),
+                       "-l", self.language, "-otxt", "-of", str(scratch / "transcript")], scratch, deadline)
             output = scratch / "transcript.txt"
             if not output.is_file() or output.stat().st_size > 32 * 1024:
                 raise SpeechError("invalid transcription output")
@@ -172,3 +165,57 @@ class SpeechRunner:
             if not text or len(text) > 8000:
                 raise SpeechError("invalid transcription output")
             return text
+
+
+class Handler(BaseHTTPRequestHandler):
+    """The speech service: POST /transcribe with the recording as the body and its media type."""
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if self.path != "/transcribe" or not 0 < length <= MAX_AUDIO:
+            return self.reply(400, {"error": "unsupported or empty recording"})
+        audio = self.rfile.read(length)
+        try:
+            self.reply(200, {"text": self.server.runner.transcribe(audio, self.headers.get("Content-Type", ""))})
+        except SpeechError as exc:
+            self.reply(422, {"error": str(exc)})
+
+    def reply(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *_):
+        pass
+
+
+def serve(config_path, scratch_root, host, port):
+    # One request at a time: a transcription uses every core anyway.
+    server = HTTPServer((host, port), Handler)
+    server.runner = SpeechRunner(config_path, scratch_root)
+    server.serve_forever()
+
+
+class SpeechClient:
+    """The server's side of the speech service."""
+
+    def __init__(self, url):
+        self.url = url.rstrip("/")
+
+    def transcribe(self, audio, media_type):
+        request = urllib.request.Request(self.url + "/transcribe", data=audio, method="POST",
+                                         headers={"Content-Type": media_type})
+        try:
+            with urllib.request.urlopen(request, timeout=RUNNER_SECONDS + 30) as response:
+                return json.loads(response.read(64 * 1024))["text"]
+        except urllib.error.HTTPError as exc:
+            try:
+                message = json.loads(exc.read(4096))["error"]
+            except (ValueError, KeyError, TypeError):
+                message = f"speech service returned {exc.code}"
+            raise SpeechError(message) from None
+        except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+            raise SpeechError("speech service unavailable") from None

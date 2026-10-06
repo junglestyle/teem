@@ -23,7 +23,7 @@ services:
   server:
     build:
       context: ..
-      # The speech target adds FFmpeg and Bubblewrap; voice turns on only when speech.json exists.
+      # The speech target adds FFmpeg for the speech service; one image serves both.
       target: speech
     image: teem-server
     pull_policy: never
@@ -47,15 +47,38 @@ services:
         set -- "$$@" --fidelity-config /srv/teem/config/fidelity.json;
         fi;
         if [ -f /srv/teem/config/speech.json ]; then
-        set -- "$$@" --speech-config /srv/teem/config/speech.json --speech-scratch /srv/teem/speech-scratch;
+        set -- "$$@" --speech-url http://speech:8766;
         fi;
         exec teem-server serve "$$@"
     # Loopback only: tailscale serve publishes it to the tailnet.
     ports:
       - "127.0.0.1:8765:8765"
+    networks: [default, speech]
     volumes:
       - /mnt/storage/teem/artifacts:/srv/teem/artifacts
       - /mnt/storage/teem/config:/srv/teem/config:ro
+
+  # Voice notes, started by install/nas.sh only when config/speech.json exists. FFmpeg and whisper
+  # parse audio here, isolated by the container itself: no network beyond the server, no secrets,
+  # a read-only filesystem, and no capabilities.
+  speech:
+    image: teem-server
+    pull_policy: never
+    container_name: teem-speech
+    restart: unless-stopped
+    # Python as PID 1 ignores SIGTERM; a tiny init forwards it so stops are prompt.
+    init: true
+    user: "568:568"
+    command: ["speech", "--speech-config", "/srv/teem/speech.json", "--scratch", "/srv/teem/speech-scratch",
+              "--host", "0.0.0.0"]
+    networks: [speech]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 3g
+    pids_limit: 64
+    volumes:
+      - /mnt/storage/teem/config/speech.json:/srv/teem/speech.json:ro
       - /mnt/storage/teem/speech:/srv/teem/speech:ro
     # Recordings stay in memory, outside artifacts and backups.
     tmpfs:
@@ -72,3 +95,9 @@ services:
     user: "568:568"
     env_file: /mnt/storage/teem/config/teem.env
     command: ["migrate"]
+
+networks:
+  default: {}
+  # Internal: the speech container can reach the server and nothing else.
+  speech:
+    internal: true

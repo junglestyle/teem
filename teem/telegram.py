@@ -124,8 +124,7 @@ def transcribe_voice(app, voice):
     if not isinstance(info.get("file_path"), str):
         raise TelegramError("voice file unavailable")
     audio = download(app, info["file_path"])
-    with app.speech.lock:
-        return app.speech._transcribe(audio, "audio/ogg")
+    return app.speech.transcribe(audio, "audio/ogg")
 
 
 def queue_message(conn, text, run_id=None):

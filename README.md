@@ -30,7 +30,7 @@ The script:
 6. applies any database migrations,
 7. starts PostgreSQL and the server with [`install/compose.yaml`](install/compose.yaml) and checks that the server answers.
 
-On the first run it stops and asks for `TEEM_ORIGIN` (the HTTPS address, such as your `tailscale serve` URL) and for the Telegram, GitHub, and decider files. Voice notes turn on when `config/speech.json` exists; the image already includes FFmpeg and Bubblewrap.
+On the first run it stops and asks for `TEEM_ORIGIN` (the HTTPS address, such as your `tailscale serve` URL) and for the Telegram, GitHub, and decider files. Voice notes turn on when `config/speech.json` exists: the script then also starts the `teem-speech` container.
 
 To update, check out a release tag and re-run the script: `git -C /mnt/storage/teem/repo fetch --tags && git -C /mnt/storage/teem/repo checkout vX.Y.Z && sudo /mnt/storage/teem/repo/install/nas.sh`. Then update the worker to the same tag.
 
@@ -70,7 +70,7 @@ The server reads these configuration files:
   {"api_key": "<TypeSafe API key>", "model": "jev-latest", "timeout": 30}
   ```
 
-- **Speech** (optional, for voice notes): a hash-pinned `whisper-cli` and model. The server verifies both hashes at startup, runs them in a Bubblewrap sandbox, and deletes audio after transcription. `ggml-base.en.bin` is fast but inaccurate, so measure a larger English model against the 120-second clip and 180-second inference bounds on your CPU.
+- **Speech** (optional, for voice notes): a hash-pinned `whisper-cli` and model, run by a separate `teem-speech` container. It verifies both hashes at startup and deletes audio after transcription. FFmpeg and whisper parse audio there, isolated by the container: it holds no secrets, has a read-only filesystem and no capabilities, and its only network is an internal one shared with the server. `ggml-base.en.bin` is fast but inaccurate, so measure a larger English model against the 120-second clip and 180-second inference bounds on your CPU.
 
   ```json
   {"executable": "/srv/teem/bin/whisper-cli", "executable_sha256": "<sha256>", "model": "/srv/teem/models/ggml-small.en.bin", "model_sha256": "<sha256>", "language": "en"}

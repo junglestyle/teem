@@ -32,8 +32,8 @@ from .common import (
 )
 from .db import connect, event, migrate
 from .review import ReviewInputError, build_context, validate_result
-from .speech import SpeechRunner
-from . import chat, decider, fidelity, github, stats, telegram
+from .speech import SpeechClient
+from . import chat, decider, fidelity, github, speech, stats, telegram
 from .workflow import (cancel_run, create_run, decide_run, reviewer_identity, run_cancelled, status_rows,
                        run_limit, stop_run, task_attempt_limit)
 
@@ -1262,11 +1262,8 @@ class App:
         self.stopping = threading.Event()
         # Treat startup as contact, so a restart doesn't alert before the worker has had a chance to poll.
         self.worker_seen = time.monotonic()
-        speech_config = getattr(args, "speech_config", None)
-        speech_scratch = getattr(args, "speech_scratch", None)
-        if bool(speech_config) != bool(speech_scratch):
-            raise ValueError("speech configuration and scratch path must be provided together")
-        self.speech = SpeechRunner(speech_config, speech_scratch) if speech_config else None
+        speech_url = getattr(args, "speech_url", None)
+        self.speech = SpeechClient(speech_url) if speech_url else None
         github_config = github.load_config(args.github_config)
         self.github_owners, self.github_token = github_config["owners"], github_config["token"]
         self.git_base = github.GIT_BASE
@@ -1330,8 +1327,6 @@ class App:
 
     def stop(self):
         self.stopping.set()
-        if self.speech:
-            self.speech.stop()
 
 
 def main():
@@ -1348,8 +1343,7 @@ def main():
     serve.add_argument("--worker-id", required=True)
     serve.add_argument("--origin", required=True, help="External HTTPS origin, e.g. https://teem.example")
     serve.add_argument("--reviewer-config", required=True, help="server-owned local review identity and instructions JSON")
-    serve.add_argument("--speech-config", help="server-owned whisper-cli executable, model identity, and language JSON")
-    serve.add_argument("--speech-scratch", help="private temporary directory outside artifacts and backups")
+    serve.add_argument("--speech-url", help="the speech service for voice notes, e.g. http://speech:8766")
     serve.add_argument("--github-config", required=True, help="allowed GitHub owners and optional token JSON")
     serve.add_argument("--decider-config", help="OpenRouter API key, model, and timeout JSON")
     serve.add_argument("--fidelity-config", help="TypeSafe API key, Jev model, and timeout JSON for checking "
@@ -1357,7 +1351,16 @@ def main():
     serve.add_argument("--telegram-config", help="server-owned bot token and allowed Telegram user_id JSON")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
+    speech_service = sub.add_parser("speech", help="transcribe voice notes for the server; run it isolated")
+    speech_service.add_argument("--speech-config", required=True,
+                                help="whisper-cli executable, model identity, and language JSON")
+    speech_service.add_argument("--scratch", required=True, help="private temporary directory for recordings")
+    speech_service.add_argument("--host", default="127.0.0.1")
+    speech_service.add_argument("--port", type=int, default=8766)
     args = parser.parse_args()
+    if args.command == "speech":
+        speech.serve(args.speech_config, args.scratch, args.host, args.port)
+        return
     args.dsn = os.environ.get("TEEM_DSN")
     if not args.dsn:
         parser.error("TEEM_DSN required")

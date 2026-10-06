@@ -19,12 +19,12 @@ USER 568:568
 EXPOSE 8765
 ENTRYPOINT ["teem-server"]
 
-# Build this target only when local dictation is enabled. The runner and model
-# remain read-only files supplied by the deployment configuration mount.
+# Adds FFmpeg for the speech service (teem-server speech). The runner and model
+# remain read-only files supplied by the deployment.
 FROM runtime AS speech
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg bubblewrap \
+    && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 USER 568:568
 

@@ -91,7 +91,7 @@ if [ -f "$NAS_CONFIG/fidelity.json" ]; then
 fi
 if [ -f "$NAS_CONFIG/speech.json" ]; then
     chown "root:$APPS_GID" "$NAS_CONFIG/speech.json" && chmod 640 "$NAS_CONFIG/speech.json"
-    # speech.json turns voice on; the server refuses to start if its runner or model is missing.
+    # speech.json turns voice on; the speech service refuses to start if its runner or model is missing.
     for path in $(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(c["executable"], c["model"])' \
                   "$NAS_CONFIG/speech.json"); do
         host_path="$NAS_SPEECH${path#/srv/teem/speech}"
@@ -122,6 +122,11 @@ say "Starting PostgreSQL and applying migrations"
 "${COMPOSE[@]}" run --rm migrate
 
 say "Starting the server"
+if [ -f "$NAS_CONFIG/speech.json" ]; then
+    "${COMPOSE[@]}" up -d speech
+else
+    "${COMPOSE[@]}" rm -sf speech
+fi
 "${COMPOSE[@]}" up -d server
 
 say "Verifying the server redirects to sign-in"

@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import quote, urlencode, urlparse
 
-from teem import github, telegram
+from teem import github, speech, telegram
 import psycopg
 from psycopg.conninfo import make_conninfo
 
@@ -236,11 +236,16 @@ class Slice4Acceptance(unittest.TestCase):
             self.runner = self.root / "whisper-cli"
             self.speech_config = self.root / "speech.json"
             self.set_runner("approve change value")
+        speech_service = HTTPServer(("127.0.0.1", 0), speech.Handler)
+        speech_service.runner = speech.SpeechRunner(self.speech_config, self.root / "speech-scratch")
+        threading.Thread(target=speech_service.serve_forever, daemon=True).start()
+        self.addCleanup(speech_service.server_close)
+        self.addCleanup(speech_service.shutdown)
         args = type("Args", (), {"dsn": self.dsn, "artifacts": str(self.root / "artifacts"),
             "username": "user", "password": "password", "worker_id": "worker",
             "worker_token": "worker-secret", "origin": "https://teem.test",
-            "reviewer_config": str(self.reviewer_file), "speech_config": str(self.speech_config),
-            "speech_scratch": str(self.root / "speech-scratch"), "github_config": str(self.github_file)})()
+            "reviewer_config": str(self.reviewer_file), "speech_url": f"http://127.0.0.1:{speech_service.server_port}",
+            "github_config": str(self.github_file)})()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.app = App(args)
         self.server.app.git_base = str(self.git_base)
@@ -257,9 +262,10 @@ class Slice4Acceptance(unittest.TestCase):
             app.decider = {"api_key": "key", "model": "test-model", "timeout": 10}
 
     def set_runner(self, text=None, slow=False):
-        """A stand-in whisper-cli; FFmpeg validation and the Bubblewrap sandbox around it are real."""
-        program = ("#!/usr/bin/python3\nfrom pathlib import Path\nimport time\n" +
-                   ("time.sleep(120)\n" if slow else f"Path('/scratch/transcript.txt').write_text({text!r})\n"))
+        """A stand-in whisper-cli behind the real speech service and FFmpeg validation."""
+        program = ("#!/usr/bin/python3\nfrom pathlib import Path\nimport sys, time\n" +
+                   ("time.sleep(120)\n" if slow else
+                    f"Path(sys.argv[sys.argv.index('-of') + 1] + '.txt').write_text({text!r})\n"))
         self.runner.write_text(program)
         self.runner.chmod(0o755)
         self.speech_config.write_text(json.dumps({
