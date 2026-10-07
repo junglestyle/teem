@@ -26,11 +26,13 @@ I built it in two weeks, from September 23 to October 6, 2026: about 7,000 lines
 
 The full design is in [docs/architecture/v0.md](docs/architecture/v0.md), with the slices that built it alongside.
 
-## What held up
+## Lessons I'm carrying forward
 
-- **The candidate/review gate.** Freezing an exact Candidate, then reviewing it with a different model family that can't see the implementer's reasoning, was the most valuable part of the design. Binding every review and check result to one immutable Candidate meant a revision could never inherit a stale pass.
-- **Authority as data.** Recording each Approval as a durable record tied to a specific action made the system easy to reason about. A model's output was always evidence, never permission.
-- **Measuring it.** The stats page tracked first-pass review rate, revisions per Run, and how many Teem pull requests I actually merged, per model. That turned "is this working?" into a number.
+- **Review the exact artifact, with fresh eyes.** Freeze a Candidate, then have a different model family review it without seeing the implementer's reasoning. Bind every check and review to that one immutable Candidate, so a revision can never inherit a stale pass.
+- **Authority is data, not model output.** Record each approval as a durable record tied to one specific action. Anything a model produces is evidence, never permission, and no model can extend its own budget or declare itself done.
+- **Give agents the least they need.** Each container got only its own role's model credential and an allowlisted network path. The credentials that change the outside world stayed with deterministic server code.
+- **Bound everything.** Deadlines, attempt caps and revision limits enforced outside the prompt kept failures cheap and visible.
+- **Measure whether it helps.** Tracking first-pass review rate and how many agent PRs I actually merged, per model, turned "is this working?" into a number.
 
 ## Why I stopped
 
