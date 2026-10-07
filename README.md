@@ -36,7 +36,7 @@ The full design is in [docs/architecture/v0.md](docs/architecture/v0.md), with t
 
 ## Why I stopped
 
-[Edit this in your own words. A suggested draft:] Most of Teem's code wasn't the interesting part. It was the plumbing around it: the chat interface, voice transcription, the job queue, leases, worker reconnection and deployment. A general agent runtime like Hermes already covers that ground. Maintaining my own version of it pulled time away from the parts worth building.
+I built Teem to understand the problem: what it takes to let coding agents work unattended without giving up control. Once it reached a stable, working state, I understood the problem well enough to recognize a better fit in [Hermes](https://github.com/NousResearch/hermes-agent), so I moved my day-to-day work there. The lessons above are what I took with me.
 
 ## Running it anyway
 
